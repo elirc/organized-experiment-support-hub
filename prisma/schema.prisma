@@ -1,0 +1,371 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  SUPPORT_AGENT
+  SUPPORT_LEAD
+  SUPPORT_MANAGER
+  READ_ONLY_OBSERVER
+  CUSTOMER_PORTAL
+}
+
+enum TicketStatus {
+  NEW
+  OPEN
+  PENDING
+  WAITING_ON_CUSTOMER
+  RESOLVED
+  CLOSED
+  ESCALATED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketType {
+  INCIDENT
+  QUESTION
+  BILLING
+  BUG
+  FEATURE_REQUEST
+  OTHER
+}
+
+enum TicketSource {
+  EMAIL
+  PORTAL
+  MANUAL
+  PHONE
+}
+
+enum AttachmentVisibility {
+  PUBLIC
+  INTERNAL
+}
+
+enum SLAState {
+  HEALTHY
+  AT_RISK
+  BREACHED
+  PAUSED
+  MET
+}
+
+enum EscalationStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  CANCELLED
+}
+
+enum EscalationTrigger {
+  SLA_BREACH
+  URGENT_PRIORITY
+  MANUAL
+  BUSINESS_RISK
+}
+
+model User {
+  id                  String                  @id @default(cuid())
+  name                String
+  email               String                  @unique
+  role                Role
+  isActive            Boolean                 @default(true)
+  queueMemberships    QueueMembership[]
+  ownedQueues         Queue[]                 @relation("QueueOwner")
+  assignedTickets     Ticket[]                @relation("TicketAssignee")
+  replies             Reply[]
+  internalNotes       InternalNote[]
+  statusChanges       TicketStatusHistory[]
+  priorityChanges     TicketPriorityHistory[]
+  assignmentChanges   AssignmentHistory[]     @relation("AssignmentChangedBy")
+  queueTransfers      QueueTransferHistory[]
+  escalationActions   EscalationRecord[]      @relation("EscalatedBy")
+  escalationOwnership EscalationRecord[]      @relation("EscalationOwner")
+  savedViews          SavedView[]
+  attachments         Attachment[]
+  auditLogs           AuditLog[]
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+}
+
+model Queue {
+  id           String                @id @default(cuid())
+  key          String                @unique
+  name         String
+  description  String
+  ownerId      String?
+  owner        User?                 @relation("QueueOwner", fields: [ownerId], references: [id])
+  memberships  QueueMembership[]
+  tickets      Ticket[]
+  slaPolicies  SLAPolicy[]
+  savedViews   SavedView[]
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+}
+
+model QueueMembership {
+  id        String   @id @default(cuid())
+  userId    String
+  queueId   String
+  isPrimary Boolean  @default(false)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  queue     Queue    @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, queueId])
+}
+
+model Requester {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  company       String?
+  contactNotes  String?
+  vipFlag       Boolean  @default(false)
+  tickets       Ticket[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Ticket {
+  id                    String                  @id @default(cuid())
+  ticketNumber          Int                     @unique @default(autoincrement())
+  subject               String
+  description           String
+  requesterId           String
+  requester             Requester               @relation(fields: [requesterId], references: [id], onDelete: Restrict)
+  queueId               String
+  queue                 Queue                   @relation(fields: [queueId], references: [id], onDelete: Restrict)
+  assigneeId            String?
+  assignee              User?                   @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  priority              TicketPriority
+  status                TicketStatus
+  type                  TicketType
+  source                TicketSource
+  severity              String?
+  impact                String?
+  firstResponseDueAt    DateTime
+  resolutionDueAt       DateTime
+  firstResponseAt       DateTime?
+  resolvedAt            DateTime?
+  closedAt              DateTime?
+  escalatedAt           DateTime?
+  isEscalated           Boolean                 @default(false)
+  replies               Reply[]
+  internalNotes         InternalNote[]
+  statusHistory         TicketStatusHistory[]
+  priorityHistory       TicketPriorityHistory[]
+  assignmentHistory     AssignmentHistory[]
+  queueTransferHistory  QueueTransferHistory[]
+  slaTracking           SLATrackingRecord?
+  escalations           EscalationRecord[]
+  attachments           Attachment[]
+  ticketTags            TicketTag[]
+  auditLogs             AuditLog[]
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  @@index([queueId, status])
+  @@index([assigneeId, status])
+  @@index([requesterId, createdAt])
+}
+
+model Reply {
+  id         String      @id @default(cuid())
+  ticketId   String
+  authorId   String
+  body       String
+  isEdited   Boolean     @default(false)
+  editedAt   DateTime?
+  ticket     Ticket      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author     User        @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  attachments Attachment[]
+  createdAt  DateTime    @default(now())
+}
+
+model InternalNote {
+  id         String      @id @default(cuid())
+  ticketId   String
+  authorId   String
+  body       String
+  ticket     Ticket      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author     User        @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  attachments Attachment[]
+  createdAt  DateTime    @default(now())
+}
+
+model TicketStatusHistory {
+  id          String       @id @default(cuid())
+  ticketId    String
+  changedById String
+  fromStatus  TicketStatus?
+  toStatus    TicketStatus
+  reason      String?
+  ticket      Ticket       @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  changedBy   User         @relation(fields: [changedById], references: [id], onDelete: Restrict)
+  createdAt   DateTime     @default(now())
+}
+
+model TicketPriorityHistory {
+  id           String         @id @default(cuid())
+  ticketId     String
+  changedById  String
+  fromPriority TicketPriority?
+  toPriority   TicketPriority
+  reason       String?
+  ticket       Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  changedBy    User           @relation(fields: [changedById], references: [id], onDelete: Restrict)
+  createdAt    DateTime       @default(now())
+}
+
+model AssignmentHistory {
+  id             String    @id @default(cuid())
+  ticketId       String
+  changedById    String
+  fromAssigneeId String?
+  toAssigneeId   String?
+  reason         String?
+  ticket         Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  changedBy      User      @relation("AssignmentChangedBy", fields: [changedById], references: [id], onDelete: Restrict)
+  createdAt      DateTime  @default(now())
+}
+
+model QueueTransferHistory {
+  id              String    @id @default(cuid())
+  ticketId        String
+  transferredById String
+  fromQueueId     String
+  toQueueId       String
+  reason          String?
+  ticket          Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  transferredBy   User      @relation(fields: [transferredById], references: [id], onDelete: Restrict)
+  createdAt       DateTime  @default(now())
+}
+
+model SLAPolicy {
+  id                        String             @id @default(cuid())
+  name                      String
+  queueId                   String?
+  queue                     Queue?             @relation(fields: [queueId], references: [id], onDelete: SetNull)
+  firstResponseMinutes      Int
+  resolutionMinutes         Int
+  pauseOnPending            Boolean            @default(true)
+  pauseOnWaitingOnCustomer  Boolean            @default(true)
+  atRiskThresholdMinutes    Int                @default(60)
+  isDefault                 Boolean            @default(false)
+  trackingRecords           SLATrackingRecord[]
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
+}
+
+model SLATrackingRecord {
+  id                         String    @id @default(cuid())
+  ticketId                   String    @unique
+  policyId                   String
+  policy                     SLAPolicy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  ticket                     Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  firstResponseDueAt         DateTime
+  resolutionDueAt            DateTime
+  actualFirstResponseAt      DateTime?
+  actualResolutionAt         DateTime?
+  isPaused                   Boolean   @default(false)
+  pausedAt                   DateTime?
+  accumulatedPauseMs         Int       @default(0)
+  currentFirstResponseState  SLAState
+  currentResolutionState     SLAState
+  lastEvaluatedAt            DateTime?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+}
+
+model EscalationRecord {
+  id            String            @id @default(cuid())
+  ticketId      String
+  escalatedById String
+  ownerId       String?
+  trigger       EscalationTrigger
+  reason        String
+  status        EscalationStatus
+  note          String?
+  ticket        Ticket            @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  escalatedBy   User              @relation("EscalatedBy", fields: [escalatedById], references: [id], onDelete: Restrict)
+  owner         User?             @relation("EscalationOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  resolvedAt    DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+}
+
+model Tag {
+  id         String    @id @default(cuid())
+  name       String    @unique
+  color      String?
+  ticketTags TicketTag[]
+  createdAt  DateTime  @default(now())
+}
+
+model TicketTag {
+  ticketId String
+  tagId    String
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  tag      Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([ticketId, tagId])
+}
+
+model Attachment {
+  id          String               @id @default(cuid())
+  ticketId    String?
+  replyId     String?
+  noteId      String?
+  uploadedById String
+  fileName    String
+  contentType String
+  sizeBytes   Int
+  storageKey  String
+  visibility  AttachmentVisibility
+  ticket      Ticket?              @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  reply       Reply?               @relation(fields: [replyId], references: [id], onDelete: Cascade)
+  note        InternalNote?        @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  uploadedBy  User                 @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+  createdAt   DateTime             @default(now())
+}
+
+model SavedView {
+  id         String   @id @default(cuid())
+  name       String
+  userId     String
+  queueId    String?
+  isShared   Boolean  @default(false)
+  filters    Json
+  owner      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  queue      Queue?   @relation(fields: [queueId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  ticketId   String?
+  actorId    String?
+  entityType String
+  entityId   String
+  action     String
+  summary    String
+  metadata   Json?
+  ticket     Ticket?  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+}
