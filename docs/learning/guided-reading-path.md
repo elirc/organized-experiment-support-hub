@@ -34,7 +34,7 @@
 **Why read this:** It contains the project’s session trust boundary.
 **What to look for:** Cookie parsing in `readSession()` and the distinction between `readSession()` and `requireSession()`.
 **What to trace:** `src/app/page.tsx`, `src/app/api/session/route.ts`, and `src/lib/http/route-helpers.ts` call it.
-**What a junior would likely miss:** Acting-user identity should come from the server-side session, not request bodies or hidden form inputs.
+**What a junior would likely miss:** Acting-user identity should come from the session, not request bodies or hidden form inputs. (Here the "session" is a client-held, unsigned JSON cookie rather than a server-side record; see the corrections at the end of this file.)
 
 ## Step 7 — src/lib/permissions/policies.ts
 **Why read this:** This is where the authorization model becomes concrete and reviewable.
@@ -83,3 +83,22 @@
 **What to look for:** Queue ownership, SLA policy setup, escalated incident data, and customer portal requester alignment.
 **What to trace:** It writes into the models declared in `prisma/schema.prisma`; the UI and APIs then read that same shape through repositories.
 **What a junior would likely miss:** Seed data is a teaching tool; good seeds reveal the intended workflows and edge cases.
+
+## Corrections to the steps above
+
+- **Step 6:** the session is *not* server-side. It is a JSON cookie the browser holds and can edit (`src/lib/auth/session.ts:30`, `:49`). The lesson "identity comes from the session, not the request body" still holds; the missing piece is that this session is not tamper-proof (finding F1 in `docs/architecture/README.md`).
+- **Steps 11 and 12:** `src/services/sla-job-service.ts` does import and call these modules, but nothing ever calls the job, so in practice `ticket-service.ts` is the only live caller.
+- **Step 1:** the call to `getOrCreateSessionPayload()` is conditional on there being no cookie (`src/app/page.tsx:9-12`), and the user it picks is an agent, who cannot load the workspace (F13). Expect a red error box on a fresh database until you switch users through `PATCH /api/session`.
+
+## Goal/Check ladder
+
+Work through these in order after reading the 14 steps. Each check is something you can verify from the source alone.
+
+1. **Goal:** trace one request from button to database. **Check:** for "Update Status", you can name `ticket-detail-panel.tsx` (`onStatus`), `support-hub-client.tsx:205`, `use-support-hub.ts:98-103`, `status/route.ts:9-15`, and `ticket-service.ts:686-783`.
+2. **Goal:** explain the error contract. **Check:** you can say which three error kinds `withRouteErrorHandling()` distinguishes (`ZodError` -> 400, `AppError` -> its own status, anything else -> 500) and give one input that produces each.
+3. **Goal:** understand the state machine. **Check:** without looking, say whether `CLOSED -> RESOLVED`, `RESOLVED -> CLOSED`, `ESCALATED -> CLOSED` and `NEW -> NEW` are allowed (no, yes, no, yes), then confirm in `src/services/ticket-workflow.ts:14-32`.
+4. **Goal:** find every writer of `Ticket.status`. **Check:** you find exactly four: `createTicket()` (`ticket-service.ts:305`), `addPublicReply()` (`:575`), `changeTicketStatus()` (`:707`) and `escalateTicket()` (`:866`), and you can say which of them consult the transition table (only `changeTicketStatus()`).
+5. **Goal:** understand the SLA model. **Check:** you can explain why a ticket paused for two hours is `BREACHED` the moment it resumes (`sla-service.ts:78`, `:83`) and why a response five hours late counts as `MET` (`dates.ts:16-18`).
+6. **Goal:** spot the transaction boundary. **Check:** for any workflow in `ticket-service.ts`, you can point to the read before `prisma.$transaction` and explain the race it allows.
+7. **Goal:** review authorization like a senior. **Check:** you can name two endpoints whose effective permission differs from the obvious policy function (`PATCH /api/tickets/[id]` vs `canReassignTickets`, `GET /api/bootstrap` vs `canSeeSystemDashboards`).
+8. **Goal:** change something safely. **Check:** you make agents able to load the workspace (return `dashboard: null` when `canSeeSystemDashboards()` is false in `getBootstrapData()`), add a unit test for it, and the five existing tests still pass.

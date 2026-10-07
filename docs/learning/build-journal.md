@@ -6,7 +6,7 @@
 - Why: this keeps the project focused on workflow, SLA, and auditability without adding a second axis of complexity too early.
 
 ## Stage 2 — Defined the domain schema
-- Built: `prisma/schema.prisma`, `prisma.config.ts`, `.env.example`, and `docker-compose.yml`.
+- Built: `prisma/schema.prisma`, `prisma.config.ts`, and `docker-compose.yml`. (An `.env.example` was planned but is not committed; see the repo README for the `DATABASE_URL` to use.)
 - Decision: keep explicit history tables (`TicketStatusHistory`, `AssignmentHistory`, `QueueTransferHistory`) instead of relying only on `AuditLog`.
 - Why: support operations often need both reconstructable workflow history and free-form audit events.
 
@@ -117,3 +117,29 @@
   - `src/hooks/use-support-hub.ts`: verify mutations and invalidation target the right query keys.
   - `docs/learning/flow-traces.md`: verify the traces match real functions and files.
 - Stronger reviewer flag: docs that describe a generic architecture instead of the actual files that were built.
+
+## Retrospective: claims vs. code
+
+Each claim made in this journal, checked against the repository as committed.
+
+| Journal claim | What the code shows | Verdict |
+| --- | --- | --- |
+| Stage 2 built `.env.example` | No `.env.example` is committed (`.gitignore` allows it with `!.env.example`, but the file is absent) | **Not true of the repo** |
+| Stage 2 built `docker-compose.yml` | Present; Postgres 16 only | True |
+| Explicit history tables instead of only `AuditLog` | `TicketStatusHistory`, `TicketPriorityHistory`, `AssignmentHistory`, `QueueTransferHistory` exist (`prisma/schema.prisma:208-254`) | True; but `escalateTicket()` changes status without a history row (`src/services/ticket-service.ts:863-867`) |
+| Lightweight cookie session "enough to demonstrate session trust" | Cookie is unsigned JSON (`src/lib/auth/session.ts:30`) | Demonstrates where identity comes from, not trust; forgeable (F1) |
+| "Mid notices the backend still owns identity" | Identity is whatever the cookie says | Overstated |
+| "Senior notices the auth seam can later be swapped without rewriting the service layer" | Services take a `SessionUser` argument and never read cookies themselves | True |
+| Stage 4 built `sla-job-service.ts` | Present, never called | Partly: code exists, no scheduler |
+| Stage 6 tests "catch permission leaks, invalid transitions, boundary validation bugs, and SLA pause mistakes" | 5 pure-function tests; none cover the leaks in F2, F6 or F13, the transition bypasses in F3/F7, or pause accumulation | Overstated |
+| Slice 2 reviewer focus: "verify identity comes from the cookie, not request payloads" | True | True, but the cookie is itself a request payload the client controls |
+| Slice 2: "verify clients cannot post workflow-owned fields directly" | `updateTicketSchema` excludes timestamps and escalation flags (`src/lib/validation/ticket-schemas.ts:56-70`), but includes `assigneeId` and `queueId` | Mostly true; reassignment leaks through it (F6) |
+| Slice 3: "verify all multi-step writes stay transactional" | All seven workflows use `prisma.$transaction` | True for writes; reads precede the transaction (F8) |
+| Slice 3: "verify deadlines are evaluated, not recomputed from scratch" | Deadlines are copied unchanged on every write | True, and also never extended for pauses (F4) |
+| Slice 4: "verify breach escalation only fires from persisted SLA state" | The job evaluates fresh state from `now` and acts on that, not on the persisted state | Not as described |
+| Slice 4: "verify dashboard access is permission-checked" | `getOverviewDashboard()` checks; bootstrap's queue summaries do not (`ticket-service.ts:892`) | Partly |
+| Slice 4 flag: "route handlers reaching directly into Prisma" | `bootstrap/route.ts:23-25` and `session/route.ts:16` call repositories directly (not raw Prisma) from routes | Mild instance of the flagged pattern |
+| Slice 5: "verify mutations and invalidation target the right query keys" | Every mutation invalidates `bootstrap`, `session` and the selected ticket (`src/hooks/use-support-hub.ts:51-63`) | True |
+| Stage 5: "exercising the workflows end to end" | There is no create-ticket UI, saved views apply only `search`, and an agent session cannot load the workspace | Overstated |
+
+**Overall:** the layering decisions in this journal are reflected in the code. The security and SLA claims are stronger than the implementation, and the test claims describe intent rather than coverage.

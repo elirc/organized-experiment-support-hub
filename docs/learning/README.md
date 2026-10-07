@@ -23,7 +23,7 @@ Support Hub is an internal support-operations app for one company. It is not jus
 - tickets move through workflow states
 - permissions differ by role
 - customer-visible replies and internal notes are separated
-- SLA deadlines are tracked and recalculated
+- SLA deadlines are fixed at creation and their states are re-evaluated on every write
 - escalations are first-class records
 - operational history is written on purpose, not inferred later
 
@@ -167,6 +167,8 @@ Why this matters:
 
 The important lesson here is that auth is not "just login UI." It is the trust boundary for every protected write.
 
+Be aware of the limit: the cookie holds the session as plain JSON with no signature (`readSession()` just runs `JSON.parse`), so a user can edit it and become any role. That is acceptable for this local demo and is the first thing to replace before real use. See finding F1 in `docs/architecture/README.md`.
+
 ### `src/lib/permissions/policies.ts`
 
 This file is one of the most important files in the project.
@@ -271,6 +273,8 @@ The key design idea here is:
 
 That distinction is the kind of thing mid and senior engineers pay attention to quickly.
 
+The flip side, verified by running the functions: deadlines are wall-clock minutes (no business hours or time zones), time spent paused is never added back to the deadline, and a late response is reported as `MET`. Findings F4 and F5 in `docs/architecture/README.md` have the details.
+
 ### `src/repositories/ticket-repository.ts`
 
 This file owns database access for ticket workflows.
@@ -365,7 +369,7 @@ Start in `src/services/ticket-workflow.ts`, then check `src/services/ticket-serv
 Start in `src/services/sla-service.ts`, then inspect where `evaluateSlaTracking()` is used:
 
 - `src/services/ticket-service.ts`
-- `src/services/sla-job-service.ts`
+- `src/services/sla-job-service.ts` (note: nothing calls `runSlaEvaluationJob()` yet, so this path never runs)
 
 ### If you want to change ticket detail data
 
@@ -417,3 +421,15 @@ After this onboarding guide, read:
 5. `docs/architecture/request-lifecycle.md`
 
 Those docs go deeper once you already know the map.
+
+## Before you start: verified gaps
+
+This guide describes the intended design. A review that checked every claim against the code found these gaps; each is documented with file and line evidence in `docs/architecture/README.md`:
+
+- On a fresh database the default demo user is an agent, and agents get `403` on `/api/bootstrap`, so the workspace shows an error until you switch users (F13).
+- The status state machine is enforced on `POST /status` only; customer replies and escalations change status directly (F3, F7).
+- Agents can reassign and transfer through `PATCH /api/tickets/[id]`, bypassing the lead-only rule (F6).
+- Portal users receive the requester directory and queue statistics from `/api/bootstrap` (F2).
+- There is no create-ticket UI; `POST /api/tickets` is API-only.
+
+The test suite is five pure-function tests; `docs/learning/testing-rationale.md` lists them and the ten additional node-run checks used to verify the findings.

@@ -55,3 +55,32 @@
 - What it calls: `src/lib/http/route-helpers.ts`, `src/lib/validation/ticket-schemas.ts`, and `src/services/ticket-service.ts`.
 - What would break or become insecure if this file were wrong: Internal notes could bypass the validation or authz boundary.
 - What a junior engineer would likely miswrite here: Trusting the route body and skipping the centralized note permission check in the service.
+
+## Senior review table
+
+What a reviewer would flag in each load-bearing file today, with evidence. "Severity" is a judgement for a production deployment, not for the demo.
+
+| File | Issue | Evidence | Severity |
+| --- | --- | --- | --- |
+| `src/lib/auth/session.ts` | Unsigned, client-editable JSON session; never checked against `User` | `:30`, `:49` | Critical outside a demo |
+| `src/app/api/session/route.ts` | Any session can switch to any active user | `:38-42` | Critical outside a demo |
+| `src/services/ticket-service.ts` | Bootstrap throws for `SUPPORT_AGENT` because the dashboard is fetched inside it | `:890-894` | High (default demo user is an agent) |
+| `src/services/ticket-service.ts` | `PATCH` lets agents reassign and transfer, bypassing the lead-only rule | `:403`, `:427-428` | High |
+| `src/app/api/bootstrap/route.ts` | Requester directory, users and queue stats returned to portal users | `:21-27` | High |
+| `src/services/ticket-service.ts` | Customer reply and escalation write `status` without the transition table | `:571-578`, `:863-867` | Medium |
+| `src/services/ticket-service.ts` | Ticket read outside the transaction; updates by `id` only | `:695`/`:703`, `:791`/`:793` | Medium |
+| `src/services/sla-service.ts` | Paused time never accumulated or credited | `:78`, `:83` | Medium |
+| `src/lib/utils/dates.ts` | Late responses reported as `MET` | `:16-18` | Medium |
+| `src/services/ticket-service.ts` | Reopen keeps `actualResolutionAt` in SLA tracking | `:708` vs `:729`, `:743` | Medium |
+| `src/services/ticket-service.ts` | Permission failures returned as 409 | `:283`, `:404` | Low |
+| `src/lib/http/route-helpers.ts` | Non-JSON body becomes 500 | `:18` | Low |
+| `src/services/ticket-workflow.ts` | Self-transitions allowed; `ESCALATED -> ESCALATED` duplicates escalation records | `:25-27` | Low |
+| `src/services/sla-job-service.ts` | Never invoked; per-ticket writes not transactional; flags escalation without a record when unassigned | `:15`, `:59-75` | Medium (dashboards go stale) |
+| `src/repositories/ticket-repository.ts` | `slaState` filter accepted by the schema but never applied | `listTickets()` at `:80-173` has no `slaState` clause | Low |
+| `prisma/schema.prisma` | Deadlines and actual timestamps duplicated on `Ticket` and `SLATrackingRecord` | `:158-161`, `:278-281` | Low now, Medium once deadlines can move |
+
+## Corrections to the entries above
+
+- **`src/repositories/ticket-repository.ts` and `src/services/sla-service.ts`, "What calls it":** the listed caller `src/services/sla-job-service.ts` is real code, but nothing invokes it, so `ticket-service.ts` is the only live caller.
+- **`src/services/ticket-workflow.ts`, "What calls it":** correct as written. Its own header comment (`src/services/ticket-workflow.ts:5`) claims `sla-job-service.ts` calls it, which is not true: that file imports only `prisma`, `createTicketRepository` and `evaluateSlaTracking` (`src/services/sla-job-service.ts:11-13`). `isPauseStatus()` reaches the job only indirectly through `sla-service.ts`.
+- **`src/app/api/tickets/[ticketId]/notes/route.ts`:** the route itself adds no checks beyond session and schema, as described. The note service does not check ticket visibility, which is fine only because `assertCanAddInternalNote()` already excludes portal users.

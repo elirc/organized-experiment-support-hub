@@ -14,17 +14,19 @@ Support Hub is a production-style customer support ticketing and queue managemen
 
 ## Local setup
 
-1. Copy `.env.example` to `.env`.
+1. Create `.env` containing `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/support_hub?schema=public`. (Earlier versions of this README said to copy `.env.example`, but no such file is committed. The Prisma CLI reads `DATABASE_URL` through `prisma.config.ts`; the app and seed fall back to that same URL when it is unset.)
 2. Start Postgres with `docker compose up -d postgres`.
 3. Run `npm install`.
-4. Run `npx prisma migrate dev`.
-5. Run `npm run prisma:seed`.
+4. Run `npx prisma migrate dev`. No `prisma/migrations` folder is committed, so this creates the initial migration on first run.
+5. Run `npm run prisma:seed`. The seed deletes all existing rows first.
 6. Run `npm run dev`.
+
+Known first-run issue: the default demo session is a `SUPPORT_AGENT`, and agents get `403` from `/api/bootstrap`, so the workspace shows an error until you switch to a lead, manager or observer with `PATCH /api/session`. See finding F13 in `docs/architecture/README.md`, which also lists the other verified gaps (forgeable demo session, SLA pause semantics, permission bypasses).
 
 ## Important directories
 
 - `src/app` contains the App Router UI and REST route handlers.
-- `src/services` owns workflow logic, SLA rules, and orchestration.
+- `src/services` owns workflow logic, SLA rules, and orchestration. The SLA background job in `src/services/sla-job-service.ts` is not wired to any scheduler.
 - `src/repositories` owns database access and include/query shape decisions.
 - `src/lib/permissions` and `src/lib/validation` centralize authz and validation.
 - `prisma/schema.prisma` defines the domain schema and relationships.
